@@ -1,0 +1,27 @@
+{
+  "name": "@jackgreen/dotfiles-sync",
+  "version": "0.1.0",
+  "description": "Bidirectional dotfiles sync with age encryption support",
+  "bin": {
+    "dotfiles-sync": "bin/dotfiles-sync"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "dotfiles-sync.conf.example"
+  ],
+  "keywords": [
+    "dotfiles",
+    "sync",
+    "age",
+    "encryption"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/JackFGreen/dotfiles-sync.git"
+  }
+}

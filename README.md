@@ -11,7 +11,19 @@ Dotfiles 双向同步工具。用配置文件驱动，在本机配置和 git 仓
 
 ## 安装
 
-### Homebrew（推荐）
+### npm
+
+```bash
+npm install -g @jackgreen/dotfiles-sync
+```
+
+或直接运行：
+
+```bash
+npx @jackgreen/dotfiles-sync --help
+```
+
+### Homebrew
 
 ```bash
 brew tap JackFGreen/tap
@@ -155,7 +167,10 @@ git tag v0.1.1
 # 3. 推送
 git push origin main --tags
 
-# 4. 更新 Homebrew Tap
+# 4. 发布到 npm
+npm publish --access public
+
+# 5. 更新 Homebrew Tap
 # 计算新 SHA256
 git archive --format=tar.gz --prefix=dotfiles-sync-0.1.1/ v0.1.1 -o /tmp/dotfiles-sync-0.1.1.tar.gz
 shasum -a 256 /tmp/dotfiles-sync-0.1.1.tar.gz
