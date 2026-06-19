@@ -1,0 +1,390 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+source "${LIB_DIR}/core.sh"
+
+# ========== 帮助信息 ==========
+
+show_help() {
+  cat <<'EOF'
+dotfiles-sync - Dotfiles 双向同步工具
+
+用法:
+  dotfiles-sync <command> [repo_dir]
+
+命令:
+  init                首次使用：生成 age 密钥对 + .age-recipients
+  to-local [dir]      仓库 → 本机（默认当前目录）
+  to-github [dir]     本机 → 仓库（默认当前目录）
+  diff [dir]          只看差异，不同步
+  --help              显示帮助信息
+
+示例:
+  cd ~/my-dotfiles
+  dotfiles-sync init
+  dotfiles-sync diff
+  dotfiles-sync to-local
+  dotfiles-sync to-github ~/my-dotfiles
+EOF
+}
+
+# ========== init 命令 ==========
+
+cmd_init() {
+  local repo_dir="${1:-$(pwd)}"
+  local keys_file="${HOME}/.config/age/keys.txt"
+  local recipients_file="${repo_dir}/.age-recipients"
+
+  check_age || exit 1
+
+  # 生成密钥对
+  if [[ ! -f "$keys_file" ]]; then
+    echo "生成 age 密钥对..."
+    mkdir -p "$(dirname "$keys_file")"
+    age-keygen -o "$keys_file"
+    chmod 600 "$keys_file"
+    echo "私钥已保存到 ${keys_file}"
+  else
+    echo "密钥对已存在：${keys_file}"
+  fi
+
+  # 提取公钥写入仓库
+  local pubkey
+  pubkey=$(age-keygen -y "$keys_file")
+  echo "$pubkey" > "$recipients_file"
+  echo "公钥已写入 ${recipients_file}"
+}
+
+# ========== diff 命令 ==========
+
+cmd_diff() {
+  local repo_dir
+  repo_dir=$(validate_repo_dir "${1:-}") || exit 1
+
+  load_config "$repo_dir" || exit 1
+
+  local diff_output=""
+  local diff_files=()
+  local diff_dirs=()
+  local all_files=("${SYNC_FILES[@]+"${SYNC_FILES[@]}"}")
+
+  # 加入加密文件（密文）
+  for enc_file in "${ENCRYPTED_FILES[@]+"${ENCRYPTED_FILES[@]}"}"; do
+    all_files+=("${enc_file}.age")
+  done
+
+  echo "========================================="
+  echo "  对比差异"
+  echo "========================================="
+  echo ""
+  echo "源:   ${HOME}"
+  echo "目标: ${SYNC_TARGET_DIR}"
+  echo ""
+
+  # 对比单个文件
+  for file in "${all_files[@]}"; do
+    local src="${HOME}/${file}"
+    local dest="${SYNC_TARGET_DIR}/${file}"
+    if has_diff_file "$src" "$dest"; then
+      diff_files+=("$file")
+      if [[ ! -f "$dest" ]]; then
+        diff_output+="━━━ ~/${file} (仓库文件不存在) ━━━"$'\n'
+      else
+        diff_output+="━━━ ~/${file} ━━━"$'\n'
+        diff_output+="$(diff --color=always -u "$dest" "$src" 2>/dev/null || true)"$'\n'
+      fi
+      diff_output+=$'\n'
+    fi
+  done
+
+  # 对比目录
+  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
+    local src="${HOME}/${dir}"
+    local dest="${SYNC_TARGET_DIR}/${dir}"
+    if has_diff_dir "$src" "$dest"; then
+      diff_dirs+=("$dir")
+      if [[ ! -d "$dest" ]]; then
+        diff_output+="━━━ ~/${dir}/ (仓库目录不存在) ━━━"$'\n'
+      else
+        diff_output+="━━━ ~/${dir}/ ━━━"$'\n'
+        diff_output+="$(diff --color=always -ru "$dest" "$src" 2>/dev/null || true)"$'\n'
+      fi
+      diff_output+=$'\n'
+    fi
+  done
+
+  if [[ ${#diff_files[@]} -eq 0 && ${#diff_dirs[@]} -eq 0 ]]; then
+    echo "无差异。"
+    return 0
+  fi
+
+  echo "========================================="
+  echo "  发现差异: ${#diff_files[@]} 个文件, ${#diff_dirs[@]} 个目录"
+  echo "========================================="
+  echo ""
+  echo "$diff_output"
+}
+
+# ========== to-github 命令 ==========
+
+cmd_to_github() {
+  local repo_dir
+  repo_dir=$(validate_repo_dir "${1:-}") || exit 1
+
+  load_config "$repo_dir" || exit 1
+
+  local all_files=("${SYNC_FILES[@]+"${SYNC_FILES[@]}"}")
+  local encrypted_actual=()
+
+  # 加密文件
+  if [[ ${#ENCRYPTED_FILES[@]} -gt 0 ]]; then
+    check_age || exit 1
+    for enc_file in "${ENCRYPTED_FILES[@]}"; do
+      local plaintext="${HOME}/${enc_file}"
+      if [[ -f "$plaintext" ]]; then
+        echo "加密 ~/${enc_file} -> ${SYNC_DIR}/${enc_file}.age"
+        encrypt_file "$plaintext" "$AGE_RECIPIENTS_FILE"
+        encrypted_actual+=("${enc_file}.age")
+      fi
+    done
+    echo ""
+  fi
+
+  # 合并加密文件到同步列表
+  all_files+=("${encrypted_actual[@]+"${encrypted_actual[@]}"}")
+
+  echo "========================================="
+  echo "  Dotfiles 同步到仓库"
+  echo "========================================="
+  echo ""
+  echo "源:     ${HOME}"
+  echo "目标:   ${SYNC_TARGET_DIR}"
+  echo ""
+
+  local diff_files=()
+  local diff_dirs=()
+  local diff_output=""
+
+  # 对比单个文件
+  for file in "${all_files[@]}"; do
+    local src="${HOME}/${file}"
+    local dest="${SYNC_TARGET_DIR}/${file}"
+    if has_diff_file "$src" "$dest"; then
+      diff_files+=("$file")
+      if [[ ! -f "$dest" ]]; then
+        diff_output+="━━━ ~/${file} (仓库文件不存在) ━━━"$'\n'
+      else
+        diff_output+="━━━ ~/${file} ━━━"$'\n'
+        diff_output+="$(diff --color=always -u "$dest" "$src" 2>/dev/null || true)"$'\n'
+      fi
+      diff_output+=$'\n'
+    fi
+  done
+
+  # 对比目录
+  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
+    local src="${HOME}/${dir}"
+    local dest="${SYNC_TARGET_DIR}/${dir}"
+    if has_diff_dir "$src" "$dest"; then
+      diff_dirs+=("$dir")
+      if [[ ! -d "$dest" ]]; then
+        diff_output+="━━━ ~/${dir}/ (仓库目录不存在) ━━━"$'\n'
+      else
+        diff_output+="━━━ ~/${dir}/ ━━━"$'\n'
+        diff_output+="$(diff --color=always -ru "$dest" "$src" 2>/dev/null || true)"$'\n'
+      fi
+      diff_output+=$'\n'
+    fi
+  done
+
+  if [[ ${#diff_files[@]} -eq 0 && ${#diff_dirs[@]} -eq 0 ]]; then
+    echo "无差异，无需同步。"
+    return 0
+  fi
+
+  echo ""
+  echo "========================================="
+  echo "  发现差异: ${#diff_files[@]} 个文件, ${#diff_dirs[@]} 个目录"
+  echo "========================================="
+  echo ""
+  echo "$diff_output"
+
+  if ! confirm_action "确认同步以上差异文件到仓库?"; then
+    echo "已取消同步。"
+    return 0
+  fi
+
+  echo ""
+
+  # 创建目标目录
+  create_target_dirs "${SYNC_TARGET_DIR}"
+
+  # 同步单个文件
+  local synced=0
+  for file in "${all_files[@]}"; do
+    sync_single_file "${HOME}/${file}" "${SYNC_TARGET_DIR}/${file}" "~/${file}" && ((synced++)) || true
+  done
+
+  # 同步目录
+  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
+    sync_directory "${HOME}/${dir}" "${SYNC_TARGET_DIR}/${dir}" "~/${dir}/" && ((synced++)) || true
+  done
+
+  echo ""
+  echo "========================================="
+  echo "  同步完成: ${synced} 项已更新"
+  echo "========================================="
+}
+
+# ========== to-local 命令 ==========
+
+cmd_to_local() {
+  local repo_dir
+  repo_dir=$(validate_repo_dir "${1:-}") || exit 1
+
+  load_config "$repo_dir" || exit 1
+
+  local all_files=("${SYNC_FILES[@]+"${SYNC_FILES[@]}"}")
+  local encrypted_actual=()
+
+  # 加入加密文件（密文）
+  for enc_file in "${ENCRYPTED_FILES[@]+"${ENCRYPTED_FILES[@]}"}"; do
+    all_files+=("${enc_file}.age")
+    encrypted_actual+=("$enc_file")
+  done
+
+  echo "========================================="
+  echo "  Dotfiles 同步到本机"
+  echo "========================================="
+  echo ""
+  echo "源仓库: ${SYNC_TARGET_DIR}"
+  echo "目标:   ${HOME}"
+  echo ""
+
+  local diff_files=()
+  local diff_dirs=()
+  local diff_output=""
+
+  # 对比单个文件
+  for file in "${all_files[@]}"; do
+    local src="${SYNC_TARGET_DIR}/${file}"
+    local dest="${HOME}/${file}"
+    if has_diff_file "$src" "$dest"; then
+      diff_files+=("$file")
+      if [[ ! -f "$dest" ]]; then
+        diff_output+="━━━ ~/${file} (本地文件不存在) ━━━"$'\n'
+      else
+        diff_output+="━━━ ~/${file} ━━━"$'\n'
+        diff_output+="$(diff --color=always -u "$dest" "$src" 2>/dev/null || true)"$'\n'
+      fi
+      diff_output+=$'\n'
+    fi
+  done
+
+  # 对比目录
+  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
+    local src="${SYNC_TARGET_DIR}/${dir}"
+    local dest="${HOME}/${dir}"
+    if has_diff_dir "$src" "$dest"; then
+      diff_dirs+=("$dir")
+      if [[ ! -d "$dest" ]]; then
+        diff_output+="━━━ ~/${dir}/ (本地目录不存在) ━━━"$'\n'
+      else
+        diff_output+="━━━ ~/${dir}/ ━━━"$'\n'
+        diff_output+="$(diff --color=always -ru "$dest" "$src" 2>/dev/null || true)"$'\n'
+      fi
+      diff_output+=$'\n'
+    fi
+  done
+
+  if [[ ${#diff_files[@]} -eq 0 && ${#diff_dirs[@]} -eq 0 ]]; then
+    echo "无差异，无需同步。"
+    return 0
+  fi
+
+  echo ""
+  echo "========================================="
+  echo "  发现差异: ${#diff_files[@]} 个文件, ${#diff_dirs[@]} 个目录"
+  echo "========================================="
+  echo ""
+  echo "$diff_output"
+
+  if ! confirm_action "确认同步以上差异文件到本机?"; then
+    echo "已取消同步。"
+    return 0
+  fi
+
+  echo ""
+
+  # 创建目标目录
+  create_target_dirs "${HOME}"
+
+  # 同步单个文件
+  local synced=0
+  for file in "${all_files[@]}"; do
+    sync_single_file "${SYNC_TARGET_DIR}/${file}" "${HOME}/${file}" "~/${file}" && ((synced++))
+  done
+
+  # 同步目录
+  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
+    sync_directory "${SYNC_TARGET_DIR}/${dir}" "${HOME}/${dir}" "~/${dir}/" && ((synced++))
+  done
+
+  # 解密文件
+  if [[ ${#encrypted_actual[@]} -gt 0 ]]; then
+    check_age || exit 1
+    echo ""
+    for enc_file in "${encrypted_actual[@]}"; do
+      local encrypted="${SYNC_TARGET_DIR}/${enc_file}.age"
+      local plaintext="${HOME}/${enc_file}"
+      if [[ -f "$encrypted" ]]; then
+        echo "解密 ${SYNC_DIR}/${enc_file}.age -> ~/${enc_file}"
+        decrypt_file "$encrypted" "$plaintext"
+      fi
+    done
+  fi
+
+  echo ""
+  echo "========================================="
+  echo "  同步完成: ${synced} 项已更新"
+  echo "========================================="
+}
+
+# ========== 主入口 ==========
+
+main() {
+  local command="${1:-}"
+
+  case "$command" in
+    init)
+      shift
+      cmd_init "$@"
+      ;;
+    to-local)
+      shift
+      cmd_to_local "$@"
+      ;;
+    to-github)
+      shift
+      cmd_to_github "$@"
+      ;;
+    diff)
+      shift
+      cmd_diff "$@"
+      ;;
+    --help|-h|help|"")
+      show_help
+      ;;
+    *)
+      echo "错误：未知命令 '${command}'"
+      echo "运行 dotfiles-sync --help 查看帮助"
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"

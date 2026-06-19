@@ -1,0 +1,30 @@
+# dotfiles-sync 配置文件
+# 将此文件复制到你的 dotfiles 仓库根目录，重命名为 dotfiles-sync.conf
+
+# 同步文件存放目录（相对于仓库根目录）
+SYNC_DIR="home"
+
+# 单个文件（cp 同步）
+SYNC_FILES=(
+  ".zshrc"
+  ".config/xxx/xxx.json"
+)
+
+# 目录（rsync --delete 同步）
+SYNC_DIRS=(
+  ".zsh"
+  ".config/xxx"
+)
+
+# rsync 排除规则
+RSYNC_EXCLUDES=(
+  "--exclude=.DS_Store"
+  "--exclude=*.zwc"
+  "--exclude=.git/"
+)
+
+# 加密文件（明文路径，密文自动为 路径.age）
+# 需要先运行 dotfiles-sync init 生成 age 密钥对
+ENCRYPTED_FILES=(
+  ".zshrc.local"
+)
