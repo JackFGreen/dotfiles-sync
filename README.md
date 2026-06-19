@@ -50,14 +50,13 @@ SYNC_DIR="home"
 # 单个文件（cp 同步）
 SYNC_FILES=(
   ".zshrc"
-  ".gitconfig"
-  ".tmux.conf"
+  ".config/xxx/xxx.json"
 )
 
 # 目录（rsync --delete 同步）
 SYNC_DIRS=(
   ".zsh"
-  ".config/yazi"
+  ".config/xxx"
 )
 
 # rsync 排除规则
@@ -68,9 +67,9 @@ RSYNC_EXCLUDES=(
 )
 
 # 加密文件（明文路径，密文自动为 路径.age）
+# 需要先运行 dotfiles-sync init 生成 age 密钥对
 ENCRYPTED_FILES=(
   ".zshrc.local"
-  ".msw/config.jsonc"
 )
 ```
 
