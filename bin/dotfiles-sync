@@ -67,9 +67,6 @@ cmd_diff() {
 
   load_config "$repo_dir" || exit 1
 
-  local diff_output=""
-  local diff_files=()
-  local diff_dirs=()
   local all_files=("${SYNC_FILES[@]+"${SYNC_FILES[@]}"}")
 
   # 加入加密文件（密文）
@@ -85,48 +82,18 @@ cmd_diff() {
   echo "目标: ${SYNC_TARGET_DIR}"
   echo ""
 
-  # 对比单个文件
-  for file in "${all_files[@]}"; do
-    local src="${HOME}/${file}"
-    local dest="${SYNC_TARGET_DIR}/${file}"
-    if has_diff_file "$src" "$dest"; then
-      diff_files+=("$file")
-      if [[ ! -f "$dest" ]]; then
-        diff_output+="━━━ ~/${file} (仓库文件不存在) ━━━"$'\n'
-      else
-        diff_output+="━━━ ~/${file} ━━━"$'\n'
-        diff_output+="$(diff --color=always -u "$dest" "$src" 2>/dev/null || true)"$'\n'
-      fi
-      diff_output+=$'\n'
-    fi
-  done
+  compute_diff "${HOME}" "${SYNC_TARGET_DIR}" "仓库文件不存在" "仓库目录不存在"
 
-  # 对比目录
-  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
-    local src="${HOME}/${dir}"
-    local dest="${SYNC_TARGET_DIR}/${dir}"
-    if has_diff_dir "$src" "$dest"; then
-      diff_dirs+=("$dir")
-      if [[ ! -d "$dest" ]]; then
-        diff_output+="━━━ ~/${dir}/ (仓库目录不存在) ━━━"$'\n'
-      else
-        diff_output+="━━━ ~/${dir}/ ━━━"$'\n'
-        diff_output+="$(diff --color=always -ru "$dest" "$src" 2>/dev/null || true)"$'\n'
-      fi
-      diff_output+=$'\n'
-    fi
-  done
-
-  if [[ ${#diff_files[@]} -eq 0 && ${#diff_dirs[@]} -eq 0 ]]; then
+  if [[ ${DIFF_NFILES} -eq 0 && ${DIFF_NDIRS} -eq 0 ]]; then
     echo "无差异。"
     return 0
   fi
 
   echo "========================================="
-  echo "  发现差异: ${#diff_files[@]} 个文件, ${#diff_dirs[@]} 个目录"
+  echo "  发现差异: ${DIFF_NFILES} 个文件, ${DIFF_NDIRS} 个目录"
   echo "========================================="
   echo ""
-  echo "$diff_output"
+  echo "$DIFF_OUTPUT"
 }
 
 # ========== to-github 命令 ==========
@@ -165,53 +132,19 @@ cmd_to_github() {
   echo "目标:   ${SYNC_TARGET_DIR}"
   echo ""
 
-  local diff_files=()
-  local diff_dirs=()
-  local diff_output=""
+  compute_diff "${HOME}" "${SYNC_TARGET_DIR}" "仓库文件不存在" "仓库目录不存在"
 
-  # 对比单个文件
-  for file in "${all_files[@]}"; do
-    local src="${HOME}/${file}"
-    local dest="${SYNC_TARGET_DIR}/${file}"
-    if has_diff_file "$src" "$dest"; then
-      diff_files+=("$file")
-      if [[ ! -f "$dest" ]]; then
-        diff_output+="━━━ ~/${file} (仓库文件不存在) ━━━"$'\n'
-      else
-        diff_output+="━━━ ~/${file} ━━━"$'\n'
-        diff_output+="$(diff --color=always -u "$dest" "$src" 2>/dev/null || true)"$'\n'
-      fi
-      diff_output+=$'\n'
-    fi
-  done
-
-  # 对比目录
-  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
-    local src="${HOME}/${dir}"
-    local dest="${SYNC_TARGET_DIR}/${dir}"
-    if has_diff_dir "$src" "$dest"; then
-      diff_dirs+=("$dir")
-      if [[ ! -d "$dest" ]]; then
-        diff_output+="━━━ ~/${dir}/ (仓库目录不存在) ━━━"$'\n'
-      else
-        diff_output+="━━━ ~/${dir}/ ━━━"$'\n'
-        diff_output+="$(diff --color=always -ru "$dest" "$src" 2>/dev/null || true)"$'\n'
-      fi
-      diff_output+=$'\n'
-    fi
-  done
-
-  if [[ ${#diff_files[@]} -eq 0 && ${#diff_dirs[@]} -eq 0 ]]; then
+  if [[ ${DIFF_NFILES} -eq 0 && ${DIFF_NDIRS} -eq 0 ]]; then
     echo "无差异，无需同步。"
     return 0
   fi
 
   echo ""
   echo "========================================="
-  echo "  发现差异: ${#diff_files[@]} 个文件, ${#diff_dirs[@]} 个目录"
+  echo "  发现差异: ${DIFF_NFILES} 个文件, ${DIFF_NDIRS} 个目录"
   echo "========================================="
   echo ""
-  echo "$diff_output"
+  echo "$DIFF_OUTPUT"
 
   if ! confirm_action "确认同步以上差异文件到仓库?"; then
     echo "已取消同步。"
@@ -265,53 +198,19 @@ cmd_to_local() {
   echo "目标:   ${HOME}"
   echo ""
 
-  local diff_files=()
-  local diff_dirs=()
-  local diff_output=""
+  compute_diff "${SYNC_TARGET_DIR}" "${HOME}" "本地文件不存在" "本地目录不存在"
 
-  # 对比单个文件
-  for file in "${all_files[@]}"; do
-    local src="${SYNC_TARGET_DIR}/${file}"
-    local dest="${HOME}/${file}"
-    if has_diff_file "$src" "$dest"; then
-      diff_files+=("$file")
-      if [[ ! -f "$dest" ]]; then
-        diff_output+="━━━ ~/${file} (本地文件不存在) ━━━"$'\n'
-      else
-        diff_output+="━━━ ~/${file} ━━━"$'\n'
-        diff_output+="$(diff --color=always -u "$dest" "$src" 2>/dev/null || true)"$'\n'
-      fi
-      diff_output+=$'\n'
-    fi
-  done
-
-  # 对比目录
-  for dir in "${SYNC_DIRS[@]+"${SYNC_DIRS[@]}"}"; do
-    local src="${SYNC_TARGET_DIR}/${dir}"
-    local dest="${HOME}/${dir}"
-    if has_diff_dir "$src" "$dest"; then
-      diff_dirs+=("$dir")
-      if [[ ! -d "$dest" ]]; then
-        diff_output+="━━━ ~/${dir}/ (本地目录不存在) ━━━"$'\n'
-      else
-        diff_output+="━━━ ~/${dir}/ ━━━"$'\n'
-        diff_output+="$(diff --color=always -ru "$dest" "$src" 2>/dev/null || true)"$'\n'
-      fi
-      diff_output+=$'\n'
-    fi
-  done
-
-  if [[ ${#diff_files[@]} -eq 0 && ${#diff_dirs[@]} -eq 0 ]]; then
+  if [[ ${DIFF_NFILES} -eq 0 && ${DIFF_NDIRS} -eq 0 ]]; then
     echo "无差异，无需同步。"
     return 0
   fi
 
   echo ""
   echo "========================================="
-  echo "  发现差异: ${#diff_files[@]} 个文件, ${#diff_dirs[@]} 个目录"
+  echo "  发现差异: ${DIFF_NFILES} 个文件, ${DIFF_NDIRS} 个目录"
   echo "========================================="
   echo ""
-  echo "$diff_output"
+  echo "$DIFF_OUTPUT"
 
   if ! confirm_action "确认同步以上差异文件到本机?"; then
     echo "已取消同步。"
