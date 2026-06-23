@@ -1,6 +1,6 @@
 {
   "name": "@jackgreen/dotfiles-sync",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bidirectional dotfiles sync with age encryption support",
   "bin": {
     "dotfiles-sync": "bin/dotfiles-sync"
