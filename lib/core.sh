@@ -128,20 +128,40 @@ compute_diff() {
 
   # 对比单个文件
   for file in "${all_files[@]}"; do
-    src="${src_base}/${file}"
-    dest="${dest_base}/${file}"
-    if has_diff_file "$src" "$dest"; then
-      ((DIFF_NFILES++)) || true
-      if [[ ! -f "$dest" ]]; then
-        block="━━━ ~/${file} (${miss_file}) ━━━"$'\n'
-      else
-        block="━━━ ~/${file} ━━━"$'\n'
-        block+="$(render_file_diff "$dest" "$src" "$file")"$'\n'
+    if [[ "$file" == ENC:* ]]; then
+      # 加密文件：ENC:age绝对路径|明文绝对路径
+      local enc_spec="${file#ENC:}"
+      local age_path="${enc_spec%%|*}"
+      local plain_path="${enc_spec#*|}"
+      local plain_name="${plain_path#"${HOME}/"}"
+      if [[ ! -f "$age_path" ]]; then
+        continue
       fi
-      block+=$'\n'
-      if [[ "$file" == *.age ]]; then
+      if [[ ! -f "$plain_path" ]] || ! diff -q <(cat_or_decrypt "$age_path") "$plain_path" >/dev/null 2>&1; then
+        ((DIFF_NFILES++)) || true
+        if [[ ! -f "$plain_path" ]]; then
+          block="━━━ ~/${plain_name} (${miss_file}) ━━━"$'\n'
+        else
+          block="━━━ ~/${plain_name} ━━━"$'\n'
+          block+="$(diff --color=always -u \
+            --label "a/~/${plain_name} (明文)" --label "b/~/${plain_name} (明文)" \
+            "$plain_path" <(cat_or_decrypt "$age_path") 2>/dev/null || true)"$'\n'
+        fi
+        block+=$'\n'
         enc_out+="$block"
-      else
+      fi
+    else
+      src="${src_base}/${file}"
+      dest="${dest_base}/${file}"
+      if has_diff_file "$src" "$dest"; then
+        ((DIFF_NFILES++)) || true
+        if [[ ! -f "$dest" ]]; then
+          block="━━━ ~/${file} (${miss_file}) ━━━"$'\n'
+        else
+          block="━━━ ~/${file} ━━━"$'\n'
+          block+="$(render_file_diff "$dest" "$src" "$file")"$'\n'
+        fi
+        block+=$'\n'
         plain_out+="$block"
       fi
     fi
@@ -267,5 +287,5 @@ decrypt_file() {
     return 1
   fi
 
-  age -d -o "$output" "$encrypted"
+  age -d -i "$AGE_KEYS_FILE" -o "$output" "$encrypted"
 }
